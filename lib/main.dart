@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_application_1/my_drawing.dart';
+import 'package:flutter_application_1/home.dart';
 
 void main() {
-  runApp(const MaterialApp(home: MyHomePage()));
+  runApp(const MaterialApp(home: HomePage()));
 }
