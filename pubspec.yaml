@@ -1,6 +1,6 @@
 name: flutter_application_1
 description: "A new Flutter project."
-publish_to: 'none'
+publish_to: "none"
 version: 0.1.0
 
 environment:
@@ -9,9 +9,6 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  flutter_drawing_board: ^1.0.1+1
-  pdfx: ^2.9.2
-  path_provider: ^2.1.5
 
 dev_dependencies:
   flutter_test:

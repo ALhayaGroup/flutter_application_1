@@ -1,10 +1,11 @@
-import 'dart:convert';
-import 'dart:ui' as ui;
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_drawing_board/flutter_drawing_board.dart';
-import 'package:pdfx/pdfx.dart';
+import 'services/canvas_controller.dart';
+import 'widgets/infinite_canvas.dart';
+import 'widgets/canvas_toolbar.dart';
+import 'widgets/color_picker_dialog.dart';
+import 'widgets/text_editor_dialog.dart';
+import 'models/canvas_object.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -14,203 +15,223 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  final TransformationController _transformationController =
-      TransformationController();
-
-  final Map<int, DrawingController> _pageDrawings = {};
-
-  late PdfController _pdfController;
-
-  int _currentPage = 1;
-  int _totalPages = 0;
-
-  double _colorOpacity = 1;
-
-  /// Get drawing controller for current PDF page
-  DrawingController get _drawingController {
-    return _pageDrawings.putIfAbsent(_currentPage, () => DrawingController());
-  }
+  late CanvasController _canvasController;
 
   @override
   void initState() {
     super.initState();
-
-    _pdfController = PdfController(
-      document: PdfDocument.openAsset('assets/demo-link.pdf'),
-    );
-
-    _pdfController.loadingState.addListener(() {
-      if (_pdfController.loadingState.value == PdfLoadingState.success) {
-        setState(() {
-          _totalPages = _pdfController.pagesCount ?? 0;
-        });
-      }
-    });
-
-    _pdfController.pageListenable.addListener(() {
-      final page = _pdfController.pageListenable.value;
-      if (page != _currentPage) {
-        setState(() {
-          _currentPage = page;
-          _transformationController.value = Matrix4.identity();
-        });
-      }
-    });
+    _canvasController = CanvasController();
+    _loadExampleData();
   }
 
   @override
   void dispose() {
-    for (final p in _pageDrawings.values) {
-      p.dispose();
-    }
-    _pdfController.dispose();
+    _canvasController.dispose();
     super.dispose();
   }
 
-  void _showJson() {
+  /// Load example data to demonstrate the canvas
+  void _loadExampleData() {
+    // Add some example objects
+    final textObj = TextObject(
+      id: 'example_text_1',
+      position: const Offset(150, 150),
+      zIndex: 0,
+      text: 'Welcome to Freeform Canvas!\nDouble tap objects to edit.',
+      fontSize: 28,
+      color: Colors.blue,
+      width: 300,
+      height: 100,
+    );
+
+    final rectShape = ShapeObject(
+      id: 'example_shape_1',
+      position: const Offset(500, 200),
+      zIndex: 1,
+      type: ShapeType.rectangle,
+      width: 150,
+      height: 100,
+      fillColor: Colors.blue.withValues(alpha: 0.3),
+      strokeColor: Colors.blue,
+      strokeWidth: 3,
+    );
+
+    final circleShape = ShapeObject(
+      id: 'example_shape_2',
+      position: const Offset(700, 200),
+      zIndex: 2,
+      type: ShapeType.circle,
+      width: 100,
+      height: 100,
+      fillColor: Colors.green.withValues(alpha: 0.3),
+      strokeColor: Colors.green,
+      strokeWidth: 3,
+    );
+
+    _canvasController.addObject(textObj);
+    _canvasController.addObject(rectShape);
+    _canvasController.addObject(circleShape);
+  }
+
+  void _saveCanvas() async {
+    final json = _canvasController.saveToJson();
+    // In a real app, save to file system or shared preferences
+    await Clipboard.setData(ClipboardData(text: json));
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Canvas saved to clipboard (JSON)')),
+      );
+    }
+  }
+
+  void _loadCanvas() async {
+    final clipboardData = await Clipboard.getData(Clipboard.kTextPlain);
+    if (clipboardData?.text != null) {
+      try {
+        await _canvasController.loadFromJson(clipboardData!.text!);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Canvas loaded from clipboard')),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('Failed to load canvas: $e')));
+        }
+      }
+    }
+  }
+
+  void _showColorPicker() {
     showDialog(
       context: context,
-      builder: (_) => Material(
-        color: Colors.white,
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: SingleChildScrollView(
-            child: SelectableText(
-              const JsonEncoder.withIndent(
-                '  ',
-              ).convert(_drawingController.getJsonList()),
-            ),
-          ),
-        ),
+      builder: (context) => ColorPickerDialog(
+        currentColor: _canvasController.currentDrawingColor,
+        onColorChanged: (color) {
+          _canvasController.setDrawingColor(color);
+        },
       ),
     );
   }
 
-  void _resetZoom() {
-    _transformationController.value = Matrix4.identity();
+  void _handleObjectDoubleTap(CanvasObject object) {
+    if (object is TextObject) {
+      _editTextObject(object);
+    }
+  }
+
+  void _editTextObject(TextObject textObj) {
+    showDialog(
+      context: context,
+      builder: (context) => TextEditorDialog(
+        initialText: textObj.text,
+        initialFontSize: textObj.fontSize,
+        initialColor: textObj.color,
+        initialFontWeight: textObj.fontWeight,
+      ),
+    ).then((result) {
+      if (result != null) {
+        _canvasController.updateObject(textObj.id, (obj) {
+          if (obj is TextObject) {
+            return obj.copyWith(
+              text: result['text'] as String,
+              fontSize: result['fontSize'] as double,
+              color: result['color'] as Color,
+              fontWeight: result['fontWeight'] as FontWeight,
+            );
+          }
+          return obj;
+        });
+      }
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.grey.shade300,
+      backgroundColor: Colors.grey.shade200,
       appBar: AppBar(
-        title: Text('PDF Draw (${_currentPage}/$_totalPages)'),
-        systemOverlayStyle: SystemUiOverlayStyle.dark,
-        leading: PopupMenuButton<ui.Color>(
-          icon: const Icon(Icons.color_lens),
-          onSelected: (ui.Color value) {
-            _drawingController.setStyle(
-              color: value.withValues(alpha: _colorOpacity),
-            );
-          },
-          itemBuilder: (_) => [
-            PopupMenuItem(
-              child: StatefulBuilder(
-                builder: (_, setState) {
-                  return Slider(
-                    value: _colorOpacity,
-                    onChanged: (v) {
-                      setState(() => _colorOpacity = v);
-                      _drawingController.setStyle(
-                        color: _drawingController.drawConfig.value.color
-                            .withValues(alpha: _colorOpacity),
-                      );
-                    },
-                  );
-                },
-              ),
-            ),
-            ...Colors.accents.map(
-              (c) => PopupMenuItem(
-                value: c,
-                child: Container(height: 30, color: c),
-              ),
-            ),
-          ],
-        ),
+        title: const Text('Freeform Canvas'),
         actions: [
-          IconButton(icon: const Icon(Icons.javascript), onPressed: _showJson),
-          IconButton(icon: const Icon(Icons.restore), onPressed: _resetZoom),
+          IconButton(
+            icon: const Icon(Icons.save),
+            onPressed: _saveCanvas,
+            tooltip: 'Save Canvas',
+          ),
+          IconButton(
+            icon: const Icon(Icons.folder_open),
+            onPressed: _loadCanvas,
+            tooltip: 'Load Canvas',
+          ),
+          IconButton(
+            icon: const Icon(Icons.color_lens),
+            onPressed: _showColorPicker,
+            tooltip: 'Color Picker',
+          ),
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert),
+            onSelected: (value) {
+              switch (value) {
+                case 'clear':
+                  _canvasController.clear();
+                  break;
+                case 'zoom_reset':
+                  // Zoom reset is handled in InfiniteCanvas
+                  break;
+              }
+            },
+            itemBuilder: (context) => [
+              const PopupMenuItem(value: 'clear', child: Text('Clear Canvas')),
+            ],
+          ),
         ],
       ),
       body: Stack(
         children: [
-          /// PDF VIEW
-          PdfView(controller: _pdfController, scrollDirection: Axis.vertical),
+          // Infinite Canvas
+          InfiniteCanvas(
+            controller: _canvasController,
+            onObjectDoubleTap: _handleObjectDoubleTap,
+          ),
 
-          /// DRAWING LAYER
-          LayoutBuilder(
-            builder: (context, constraints) {
-              return DrawingBoard(
-                controller: _drawingController,
-                transformationController: _transformationController,
-                background: Container(
-                  width: constraints.maxWidth,
-                  height: constraints.maxHeight,
-                  color: Colors.transparent,
+          // Toolbar at bottom
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: CanvasToolbar(controller: _canvasController),
+          ),
+
+          // Drawing width control (if drawing tool is selected)
+          ListenableBuilder(
+            listenable: _canvasController,
+            builder: (context, _) {
+              if (_canvasController.currentDrawingTool == DrawingTool.eraser) {
+                return const SizedBox.shrink();
+              }
+              return Positioned(
+                right: 16,
+                top: 100,
+                child: Column(
+                  children: [
+                    const Text('Width'),
+                    RotatedBox(
+                      quarterTurns: 3,
+                      child: Slider(
+                        value: _canvasController.currentDrawingWidth,
+                        min: 1,
+                        max: 20,
+                        onChanged: (value) {
+                          _canvasController.setDrawingWidth(value);
+                        },
+                      ),
+                    ),
+                  ],
                 ),
               );
             },
-          ),
-
-          /// PAGE CONTROLS
-          Positioned(
-            right: 10,
-            top: 100,
-            child: Column(
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.keyboard_arrow_up),
-                  onPressed: () {
-                    _pdfController.previousPage(
-                      duration: const Duration(milliseconds: 300),
-                      curve: Curves.ease,
-                    );
-                  },
-                ),
-                IconButton(
-                  icon: const Icon(Icons.keyboard_arrow_down),
-                  onPressed: () {
-                    _pdfController.nextPage(
-                      duration: const Duration(milliseconds: 300),
-                      curve: Curves.ease,
-                    );
-                  },
-                ),
-              ],
-            ),
-          ),
-
-          /// TOOLBARS
-          Positioned(
-            bottom: 80,
-            left: 0,
-            right: 0,
-            child: DrawingBar(
-              controller: _drawingController,
-              tools: [
-                DefaultActionItem.undo(),
-                DefaultActionItem.redo(),
-                DefaultActionItem.clear(),
-              ],
-            ),
-          ),
-          Positioned(
-            bottom: 0,
-            left: 0,
-            right: 0,
-            child: DrawingBar(
-              controller: _drawingController,
-              tools: [
-                DefaultToolItem.pen(),
-                DefaultToolItem.brush(),
-                DefaultToolItem.rectangle(),
-                DefaultToolItem.circle(),
-                DefaultToolItem.straightLine(),
-                DefaultToolItem.eraser(),
-              ],
-            ),
           ),
         ],
       ),
